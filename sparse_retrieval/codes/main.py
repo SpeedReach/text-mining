@@ -1,7 +1,7 @@
 import argparse
 from search import *
 from util import *
-from searcher import BM25Searcher, LaplaceLanguageModel#, JelinekMercerLanguageModel
+from searcher import BM25Searcher, LaplaceLanguageModel, JelinekMercerLanguageModel
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

@@ -15,160 +15,82 @@ class BM25Searcher:
         self.searcher.set_bm25(k1=2, b=0.75)
     
     def search(self, query, k=1000):
-        return self.searcher.search(query, k=k)
+        return self.searcher.search(query, k=k)[:1000]
+    from typing import Dict, List, Tuple, Set
 
+from jnius import autoclass
 
-from typing import Dict, List, Tuple, Set
-
+class JelinekMercerLanguageModel:
+    """
+    A searcher implementation using Lucene's built-in Jelinek-Mercer language model.
+    """
+    
+    def __init__(self, index_path: str, lambda_param: float = 0.1):
+        """
+        Initialize the Jelinek-Mercer searcher.
+        
+        Args:
+            index_path (str): Path to the Lucene index
+            lambda_param (float): Smoothing parameter lambda (default: 0.1)
+                                Should be between 0 and 1
+        """
+        if not 0 <= lambda_param <= 1:
+            raise ValueError("lambda_param must be between 0 and 1")
+            
+        JLMSimilarity = autoclass('org.apache.lucene.search.similarities.LMJelinekMercerSimilarity')
+        
+        self.searcher = LuceneSearcher(index_path)
+        self.searcher.object.similarity = JLMSimilarity(lambda_param)
+    
+    def search(self, query: str, k: int = 1000):
+        """
+        Search the index using the Jelinek-Mercer language model.
+        
+        Args:
+            query (str): Search query
+            k (int): Number of results to return (default: 1000)
+            
+        Returns:
+            List of search results
+        """
+        result = self.searcher.search(query, k=3*k)
+        return result[:k]
 
 class LaplaceLanguageModel:
-    def __init__(self, index_path: str):
-        """Initialize with collection statistics"""
+    """
+    A searcher implementation using Lucene's built-in Language Model with Laplace/additive smoothing.
+    """
+    
+    def __init__(self, index_path: str, alpha: float = 1.0):
+        """
+        Initialize the Language Model searcher with Laplace smoothing.
+        
+        Args:
+            index_path (str): Path to the Lucene index
+            alpha (float): Laplace smoothing parameter (default: 1.0)
+        """
+        if alpha <= 0:
+            raise ValueError("alpha must be positive")
+            
+        # Import required Java classes
+        LMDirichletSimilarity = autoclass('org.apache.lucene.search.similarities.LMDirichletSimilarity')
+        
+        # Initialize searcher with modified Dirichlet similarity
+        # We use Dirichlet and set mu=alpha to approximate Laplace smoothing
         self.searcher = LuceneSearcher(index_path)
-        self.index_reader = LuceneIndexReader(index_path)
-        
-        # Collection statistics
-        stats = self.index_reader.stats()
-        self.total_terms = stats['total_terms']        # t: total terms in corpus
-        self.vocab_size = stats['unique_terms']        # k: vocabulary size
-        
-    def _get_background_prob(self, term: str) -> float:
-        """Calculate P(w|C) = cf/|C|"""
-        term_info = self.index_reader.get_term_counts(term, analyzer=None)
-        cf = term_info[1] if term_info else 0  # collection frequency
-        return cf / self.total_terms if cf > 0 else 0
+        self.searcher.object.similarity = LMDirichletSimilarity(alpha)
     
-    def _score_document(self, query_terms: List[str], docid: str) -> float:
+    def search(self, query: str, k: int = 1000):
         """
-        Score using query likelihood with Laplace smoothing:
-        log P(Q|D) = Σ log P(w|D)
-        where P(w|D) = (tf + 1)/(doclen + V) 
+        Search the index using the language model with Laplace smoothing.
         
-        This implements proper Laplace smoothing where:
-        - Add 1 to term frequencies
-        - Add V (vocabulary size) to denominator
+        Args:
+            query (str): Search query
+            k (int): Number of results to return (default: 1000)
+            
+        Returns:
+            List of search results
         """
-        # Get document vector and length
-        doc_vector = self.index_reader.get_document_vector(docid)
-        if not doc_vector:
-            return float('-inf')
-        
-        doc_length = sum(doc_vector.values())
-        
-        # Score query terms
-        score = 0.0
-        
-        # Using proper Laplace smoothing
-        for term in query_terms:
-            # Get term frequency in document
-            tf = doc_vector.get(term, 0)
-            
-            # Apply Laplace smoothing formula:
-            # P(w|D) = (tf + 1)/(doclen + V)
-            p_w_d = (tf + 1) / (doc_length + (self.total_terms/self.vocab_size))
-            a = (self.total_terms - self.vocab_size)/ self.vocab_size
-            b = self._get_background_prob(term)
-            c = doc_length + (self.total_terms/ self.vocab_size)
-            p_w_d += (a * b / c)
-            # Add log probability
-            score += np.log(p_w_d)
-            
-        return score
-
-    def search(self, query: str, k: int = 1000) -> List[SimpleHit]:
-        """Search using query likelihood model"""
-        # Process query
-        query_terms = query.lower().split()
-        
-        # Get candidates
-        candidates = self.searcher.search(query, k=k*5)
-        
-        # Score documents
-        scores = []
-        for hit in candidates:
-            score = self._score_document(query_terms, hit.docid)
-            if score != float('-inf'):
-                scores.append((hit.docid, score))
-        print(scores)
-        # Sort by score and take top k
-        scores.sort(key=lambda x: x[1], reverse=True)
-        scores = scores[:k]
-        
-        return [SimpleHit(docid=docid, score=score) for docid, score in scores]
-    
-
-
-class LaplaceLanguageModel:
-    def __init__(self, index_path: str):
-        """Initialize with collection statistics"""
-        self.searcher = LuceneSearcher(index_path)
-        self.index_reader = LuceneIndexReader(index_path)
-        
-        # Collection statistics
-        stats = self.index_reader.stats()
-        self.total_terms = stats['total_terms']        # t: total terms in corpus
-        self.vocab_size = stats['unique_terms']        # k: vocabulary size
-        
-    def _get_background_prob(self, term: str) -> float:
-        """Calculate P(w|C) = cf/|C|"""
-        term_info = self.index_reader.get_term_counts(term, analyzer=None)
-        cf = term_info[1] if term_info else 0  # collection frequency
-        return cf / self.total_terms if cf > 0 else 0
-    
-    def _score_document(self, query_terms: List[str], docid: str) -> float:
-        """
-        Score using query likelihood with Laplace smoothing:
-        log P(Q|D) = Σ log P(w|D)
-        where P(w|D) = (tf + 1)/(doclen + V) 
-        
-        This implements proper Laplace smoothing where:
-        - Add 1 to term frequencies
-        - Add V (vocabulary size) to denominator
-        """
-        # Get document vector and length
-        doc_vector = self.index_reader.get_document_vector(docid)
-        if not doc_vector:
-            return float('-inf')
-        
-        doc_length = sum(doc_vector.values())
-        
-        # Score query terms
-        score = 0.0
-        
-        # Using proper Laplace smoothing
-        for term in query_terms:
-            # Get term frequency in document
-            tf = doc_vector.get(term, 0)
-            
-            # Apply Laplace smoothing formula:
-            # P(w|D) = (tf + 1)/(doclen + V)
-            p_w_d = (tf + 1) / (doc_length + (self.total_terms/self.vocab_size))
-            a = (self.total_terms - self.vocab_size)/ self.vocab_size
-            b = self._get_background_prob(term)
-            c = doc_length + (self.total_terms/ self.vocab_size)
-            p_w_d += (a * b / c)
-            # Add log probability
-            score += np.log(p_w_d)
-            
-        return score
-
-    def search(self, query: str, k: int = 1000) -> List[SimpleHit]:
-        """Search using query likelihood model"""
-        # Process query
-        query_terms = query.lower().split()
-        
-        # Get candidates
-        candidates = self.searcher.search(query, k=k*5)
-        
-        # Score documents
-        scores = []
-        for hit in candidates:
-            score = self._score_document(query_terms, hit.docid)
-            if score != float('-inf'):
-                scores.append((hit.docid, score))
-                
-        # Sort by score and take top k
-        scores.sort(key=lambda x: x[1], reverse=True)
-        scores = scores[:k]
-        
-        return [SimpleHit(docid=docid, score=score) for docid, score in scores]
+        # Multiply k by 3 to get more candidates before reranking (common practice)
+        result = self.searcher.search(query, k=3*k)
+        return result[:k]
