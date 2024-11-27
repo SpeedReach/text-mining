@@ -40,7 +40,7 @@ class JelinekMercerLanguageModel:
         JLMSimilarity = autoclass('org.apache.lucene.search.similarities.LMJelinekMercerSimilarity')
         
         self.searcher = LuceneSearcher(index_path)
-        self.searcher.object.similarity = JLMSimilarity(lambda_param)
+        self.searcher.object.searcher.setSimilarity(JLMSimilarity(lambda_param))
     
     def search(self, query: str, k: int = 1000):
         """
@@ -78,7 +78,7 @@ class LaplaceLanguageModel:
         # Initialize searcher with modified Dirichlet similarity
         # We use Dirichlet and set mu=alpha to approximate Laplace smoothing
         self.searcher = LuceneSearcher(index_path)
-        self.searcher.object.similarity = LMDirichletSimilarity(alpha)
+        self.searcher.object.searcher.setSimilarity(LMDirichletSimilarity(alpha))
     
     def search(self, query: str, k: int = 1000):
         """

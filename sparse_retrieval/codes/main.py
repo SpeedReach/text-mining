@@ -17,10 +17,11 @@ if __name__ == '__main__':
     if args.method == "bm25":
         searcher = BM25Searcher(args.index)
     elif args.method == "lm_laplace":
+        print("using laplace")
         searcher = LaplaceLanguageModel(args.index)
-    else:  # lm_jm
-        pass
-        searcher = JelinekMercerLanguageModel(args.index)
+    else:
+        print("using jm")
+        searcher = JelinekMercerLanguageModel(args.index, lambda_param=0.2)
 
     query = read_title(args.query)
     search(searcher, query, args)
